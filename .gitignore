@@ -1,0 +1,64 @@
+# ─── Java / Maven ────────────────────────────────────
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+*.war
+*.ear
+
+# ─── IDE ─────────────────────────────────────────────
+.idea/
+*.iml
+*.iws
+*.ipr
+.project
+.classpath
+.settings/
+.factorypath
+.vscode/
+*.swp
+*.swo
+*~
+
+# ─── OS ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Logs ────────────────────────────────────────────
+*.log
+logs/
+spring.log
+
+# ─── Environment / Secrets ───────────────────────────
+.env
+.env.*
+*.pem
+
+# ─── Node.js / Frontend ─────────────────────────────
+node_modules/
+.next/
+out/
+build/
+dist/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.tsbuildinfo
+
+# ─── Docker ──────────────────────────────────────────
+docker-compose.override.yml
+
+# ─── Misc ────────────────────────────────────────────
+.vercel
+*.bak
+*.tmp

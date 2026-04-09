@@ -1,0 +1,21 @@
+# ─── Production Profile ──────────────────────────────────
+spring:
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USER}
+    password: ${DATABASE_PASSWORD}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS}
+
+netserve:
+  jwt:
+    secret: ${JWT_SECRET}
+
+logging:
+  level:
+    "[com.netserve]": INFO

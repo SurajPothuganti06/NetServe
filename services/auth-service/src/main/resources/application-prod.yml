@@ -1,0 +1,44 @@
+# ─── Production Profile ──────────────────────────────────
+spring:
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USER}
+    password: ${DATABASE_PASSWORD}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
+
+  # Gmail SMTP — Use an App Password (not your login password)
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${GMAIL_USERNAME}
+    password: ${GMAIL_APP_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enabled: true
+            required: true
+
+netserve:
+  jwt:
+    secret: ${JWT_SECRET}
+  app:
+    frontend-url: ${FRONTEND_URL}
+
+logging:
+  level:
+    "[com.netserve]": INFO
+    "[org.springframework.security]": WARN

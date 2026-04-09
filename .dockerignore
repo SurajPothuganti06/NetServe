@@ -1,0 +1,18 @@
+# Build artifacts
+**/target/
+**/.next/
+**/node_modules/
+**/.git/
+
+# IDE files
+**/.idea/
+**/.vscode/
+**/.gemini/
+
+# Logs
+**/*.log
+**/build_*.txt
+
+# OS
+**/Thumbs.db
+**/.DS_Store

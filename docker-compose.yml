@@ -1,0 +1,454 @@
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║          NetServe — Full Stack Docker Compose                   ║
+# ║  Run: docker compose up --build                                ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+# ── Shared env anchors ─────────────────────────────────────────────
+x-postgres-env: &postgres-env
+  SPRING_DATASOURCE_USERNAME: netserve
+  SPRING_DATASOURCE_PASSWORD: netserve_secret
+  SPRING_DATASOURCE_DRIVER_CLASS_NAME: org.postgresql.Driver
+  SPRING_JPA_HIBERNATE_DDL_AUTO: update
+
+x-kafka-env: &kafka-env
+  SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+x-redis-env: &redis-env
+  SPRING_DATA_REDIS_HOST: redis
+  SPRING_DATA_REDIS_PORT: 6379
+  SPRING_DATA_REDIS_PASSWORD: netserve_redis
+
+x-jwt-env: &jwt-env
+  NETSERVE_JWT_SECRET: netserve-jwt-secret-key-that-is-at-least-256-bits-long-for-hs256
+
+x-healthcheck: &java-healthcheck
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 40s
+
+services:
+  # ═══════════════════════════════════════════════════════════════
+  # INFRASTRUCTURE
+  # ═══════════════════════════════════════════════════════════════
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: netserve-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: netserve
+      POSTGRES_PASSWORD: netserve_secret
+      POSTGRES_DB: netserve_auth
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./services/infrastructure/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netserve -d netserve_auth"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - netserve-net
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: netserve-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    healthcheck:
+      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - netserve-net
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: netserve-kafka
+    restart: unless-stopped
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,DOCKER://kafka:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,DOCKER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: DOCKER
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - netserve-net
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: netserve-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command: |
+      "
+      echo 'Creating Kafka topics...'
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic subscription-activated --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic invoice-generated --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic payment-successful --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic usage-threshold-exceeded --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic outage-declared --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic customer-created --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic customer-status-changed --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic user-deleted --partitions 3 --replication-factor 1
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic customer-deleted --partitions 3 --replication-factor 1
+      echo 'Topics created.'
+      "
+    networks:
+      - netserve-net
+
+  redis:
+    image: redis:7-alpine
+    container_name: netserve-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass netserve_redis
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "netserve_redis", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - netserve-net
+
+  # ═══════════════════════════════════════════════════════════════
+  # BACKEND MICROSERVICES
+  # ═══════════════════════════════════════════════════════════════
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_NAME: auth-service
+    container_name: netserve-auth
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: [*postgres-env, *redis-env, *kafka-env, *jwt-env]
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/netserve_auth
+      NETSERVE_JWT_ACCESS_TOKEN_EXPIRY: 3600000
+      NETSERVE_JWT_REFRESH_TOKEN_EXPIRY: 604800000
+      SERVER_PORT: 8081
+    ports:
+      - "8081:8081"
+    healthcheck:
+      <<: *java-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/actuator/health", "||", "exit", "1"]
+    networks:
+      - netserve-net
+
+  customer-service:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_NAME: customer-service
+    container_name: netserve-customer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: [*postgres-env, *kafka-env, *jwt-env]
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/netserve_customer
+      SERVER_PORT: 8082
+    ports:
+      - "8082:8082"
+    healthcheck:
+      <<: *java-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8082/actuator/health", "||", "exit", "1"]
+    networks:
+      - netserve-net
+
+  subscription-service:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_NAME: subscription-service
+    container_name: netserve-subscription
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: [*postgres-env, *kafka-env, *jwt-env]
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/netserve_subscription
+      SERVER_PORT: 8083
+    ports:
+      - "8083:8083"
+    healthcheck:
+      <<: *java-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8083/actuator/health", "||", "exit", "1"]
+    networks:
+      - netserve-net
+
+  billing-service:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_NAME: billing-service
+    container_name: netserve-billing
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: [*postgres-env, *kafka-env, *jwt-env]
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/netserve_billing
+      SERVER_PORT: 8084
+    ports:
+      - "8084:8084"
+    healthcheck:
+      <<: *java-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8084/actuator/health", "||", "exit", "1"]
+    networks:
+      - netserve-net
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_NAME: payment-service
+    container_name: netserve-payment
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: [*postgres-env, *kafka-env, *jwt-env]
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/netserve_payment
+      SERVER_PORT: 8085
+    ports:
+      - "8085:8085"
+    healthcheck:
+      <<: *java-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8085/actuator/health", "||", "exit", "1"]
+    networks:
+      - netserve-net
+
+  usage-service:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_NAME: usage-service
+    container_name: netserve-usage
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      <<: [*postgres-env, *kafka-env, *redis-env, *jwt-env]
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/netserve_usage
+      SERVER_PORT: 8086
+    ports:
+      - "8086:8086"
+    healthcheck:
+      <<: *java-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8086/actuator/health", "||", "exit", "1"]
+    networks:
+      - netserve-net
+
+  support-service:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_NAME: support-service
+    container_name: netserve-support
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: [*postgres-env, *kafka-env, *jwt-env]
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/netserve_support
+      SERVER_PORT: 8087
+    ports:
+      - "8087:8087"
+    healthcheck:
+      <<: *java-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8087/actuator/health", "||", "exit", "1"]
+    networks:
+      - netserve-net
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_NAME: notification-service
+    container_name: netserve-notification
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    environment:
+      <<: [*postgres-env, *kafka-env, *jwt-env]
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/netserve_notification
+      SERVER_PORT: 8088
+    ports:
+      - "8088:8088"
+    healthcheck:
+      <<: *java-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8088/actuator/health", "||", "exit", "1"]
+    networks:
+      - netserve-net
+
+  # ═══════════════════════════════════════════════════════════════
+  # API GATEWAY
+  # ═══════════════════════════════════════════════════════════════
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/Dockerfile
+      args:
+        SERVICE_NAME: api-gateway
+    container_name: netserve-gateway
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      customer-service:
+        condition: service_started
+      subscription-service:
+        condition: service_started
+      billing-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+      usage-service:
+        condition: service_started
+      support-service:
+        condition: service_started
+      notification-service:
+        condition: service_started
+    environment:
+      <<: [*redis-env, *jwt-env]
+      SERVER_PORT: 8080
+
+      # ── Route overrides (localhost → container names) ──
+      SPRING_CLOUD_GATEWAY_ROUTES_0_ID: auth-service
+      SPRING_CLOUD_GATEWAY_ROUTES_0_URI: http://auth-service:8081
+      SPRING_CLOUD_GATEWAY_ROUTES_0_PREDICATES_0: Path=/api/auth/**
+
+      SPRING_CLOUD_GATEWAY_ROUTES_1_ID: customer-service
+      SPRING_CLOUD_GATEWAY_ROUTES_1_URI: http://customer-service:8082
+      SPRING_CLOUD_GATEWAY_ROUTES_1_PREDICATES_0: Path=/api/customers/**
+
+      SPRING_CLOUD_GATEWAY_ROUTES_2_ID: subscription-service
+      SPRING_CLOUD_GATEWAY_ROUTES_2_URI: http://subscription-service:8083
+      SPRING_CLOUD_GATEWAY_ROUTES_2_PREDICATES_0: Path=/api/subscriptions/**,/api/plans/**
+
+      SPRING_CLOUD_GATEWAY_ROUTES_3_ID: billing-service
+      SPRING_CLOUD_GATEWAY_ROUTES_3_URI: http://billing-service:8084
+      SPRING_CLOUD_GATEWAY_ROUTES_3_PREDICATES_0: Path=/api/billing/**,/api/invoices/**
+
+      SPRING_CLOUD_GATEWAY_ROUTES_4_ID: payment-service
+      SPRING_CLOUD_GATEWAY_ROUTES_4_URI: http://payment-service:8085
+      SPRING_CLOUD_GATEWAY_ROUTES_4_PREDICATES_0: Path=/api/payments/**
+
+      SPRING_CLOUD_GATEWAY_ROUTES_5_ID: usage-service
+      SPRING_CLOUD_GATEWAY_ROUTES_5_URI: http://usage-service:8086
+      SPRING_CLOUD_GATEWAY_ROUTES_5_PREDICATES_0: Path=/api/usage/**,/api/devices/**
+
+      SPRING_CLOUD_GATEWAY_ROUTES_6_ID: support-service
+      SPRING_CLOUD_GATEWAY_ROUTES_6_URI: http://support-service:8087
+      SPRING_CLOUD_GATEWAY_ROUTES_6_PREDICATES_0: Path=/api/tickets/**,/api/outages/**
+
+      SPRING_CLOUD_GATEWAY_ROUTES_7_ID: notification-service
+      SPRING_CLOUD_GATEWAY_ROUTES_7_URI: http://notification-service:8088
+      SPRING_CLOUD_GATEWAY_ROUTES_7_PREDICATES_0: Path=/api/notifications/**
+    ports:
+      - "8080:8080"
+    healthcheck:
+      <<: *java-healthcheck
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health", "||", "exit", "1"]
+    networks:
+      - netserve-net
+
+  # ═══════════════════════════════════════════════════════════════
+  # FRONTEND
+  # ═══════════════════════════════════════════════════════════════
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: netserve-frontend
+    restart: unless-stopped
+    depends_on:
+      api-gateway:
+        condition: service_started
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+    ports:
+      - "3000:3000"
+    networks:
+      - netserve-net
+
+# ═══════════════════════════════════════════════════════════════
+# VOLUMES & NETWORKS
+# ═══════════════════════════════════════════════════════════════
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  netserve-net:
+    driver: bridge

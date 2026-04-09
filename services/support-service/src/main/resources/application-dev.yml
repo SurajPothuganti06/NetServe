@@ -1,0 +1,21 @@
+# ─── Development Profile ─────────────────────────────────
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/netserve_support
+    username: netserve
+    password: netserve_secret
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+
+  kafka:
+    bootstrap-servers: localhost:9092
+
+netserve:
+  jwt:
+    secret: netserve-jwt-secret-key-that-is-at-least-256-bits-long-for-hs256
+
+logging:
+  level:
+    "[com.netserve]": DEBUG
