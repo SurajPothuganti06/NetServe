@@ -48,6 +48,10 @@ public class TicketService {
         return ticketRepository.findByCustomerId(customerId, pageable).map(this::toResponse);
     }
 
+    public Page<TicketResponse> getAllTickets(Pageable pageable) {
+        return ticketRepository.findAll(pageable).map(this::toResponse);
+    }
+
     public Page<TicketResponse> getTicketsByStatus(String status, Pageable pageable) {
         return ticketRepository.findByStatus(TicketStatus.valueOf(status.toUpperCase()), pageable)
                 .map(this::toResponse);

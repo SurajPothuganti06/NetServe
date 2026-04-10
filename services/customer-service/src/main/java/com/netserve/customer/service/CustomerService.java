@@ -23,8 +23,22 @@ public class CustomerService {
 
     @Transactional
     public CustomerResponse createCustomer(CreateCustomerRequest request) {
-        if (customerRepository.existsByEmail(request.getEmail())) {
-            throw new RuntimeException("Customer with this email already exists");
+        // Idempotent: if a customer already exists for this userId, return it
+        if (request.getUserId() != null) {
+            var existingByUser = customerRepository.findByUserId(request.getUserId());
+            if (existingByUser.isPresent()) {
+                log.info("Customer already exists for userId={}, returning existing profile", request.getUserId());
+                return toResponse(existingByUser.get());
+            }
+        }
+
+        // Also check by email – return existing instead of throwing
+        if (request.getEmail() != null) {
+            var existingByEmail = customerRepository.findByEmail(request.getEmail().toLowerCase());
+            if (existingByEmail.isPresent()) {
+                log.info("Customer already exists for email={}, returning existing profile", request.getEmail());
+                return toResponse(existingByEmail.get());
+            }
         }
 
         Address address = null;

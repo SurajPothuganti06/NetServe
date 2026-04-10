@@ -1,4 +1,4 @@
-"use client";
+ "use client";
 
 import React, { useState } from "react";
 import { motion } from "framer-motion";
@@ -208,16 +208,29 @@ export default function SubscriptionsPage() {
         alert("Loading your profile, please try again in a moment.");
         return;
       }
-      // Try one more time to create profile
+      // Try fetching existing profile first, then fall back to creating one
       try {
-        const { data } = await api.post("/api/customers", {
-          firstName: user?.firstName || "Customer",
-          lastName: user?.lastName || "User",
-          email: user?.email || "",
-          phone: "",
-          accountType: "RESIDENTIAL",
-        });
-        queryClient.setQueryData(["customerProfile"], data.data);
+        let profile = null;
+        try {
+          const { data } = await api.get("/api/customers/me");
+          profile = data.data;
+        } catch {
+          // Profile doesn't exist — create it (backend is idempotent)
+          const { data } = await api.post("/api/customers", {
+            firstName: user?.firstName || "Customer",
+            lastName: user?.lastName || "User",
+            email: user?.email || "",
+            phone: "",
+            accountType: "RESIDENTIAL",
+          });
+          profile = data.data;
+        }
+        if (profile) {
+          queryClient.setQueryData(["customerProfile"], profile);
+        } else {
+          alert("Unable to set up your customer profile. Please try again.");
+          return;
+        }
       } catch {
         alert("Unable to set up your customer profile. Please try again.");
         return;
@@ -492,15 +505,14 @@ export default function SubscriptionsPage() {
                           </div>
                         ) : (
                           <Button
-                            className={`w-full mt-4 flex items-center justify-center gap-2 ${
-                              isCurrent
-                                ? "bg-white/10 text-white cursor-default"
-                                : isUpgrade
+                            className={`w-full mt-4 flex items-center justify-center gap-2 ${isCurrent
+                              ? "bg-white/10 text-white cursor-default"
+                              : isUpgrade
                                 ? "bg-gradient-to-r from-[#1a73e8] to-[#0b57d0] hover:opacity-90 text-white"
                                 : isDowngrade
-                                ? "bg-white/5 border border-white/10 hover:bg-white/10 text-white"
-                                : "bg-gradient-to-r from-[#1a73e8] to-[#0b57d0] hover:opacity-90 text-white"
-                            }`}
+                                  ? "bg-white/5 border border-white/10 hover:bg-white/10 text-white"
+                                  : "bg-gradient-to-r from-[#1a73e8] to-[#0b57d0] hover:opacity-90 text-white"
+                              }`}
                             variant={isDowngrade ? "outline" : "default"}
                             disabled={isDeprecated || isCurrent}
                             onClick={() => handleSubscribeClick(plan)}
@@ -508,16 +520,16 @@ export default function SubscriptionsPage() {
                             <CreditCard className="w-4 h-4" />
                             {isDeprecated ? "Unavailable" :
                               isCurrent ? "Current Plan" :
-                              !currentPlan ? "Subscribe & Pay" :
-                              isUpgrade ? (
-                                <>
-                                  <ArrowUpRight className="w-3 h-3" /> Upgrade & Pay
-                                </>
-                              ) : (
-                                <>
-                                  <ArrowDownRight className="w-3 h-3" /> Downgrade & Pay
-                                </>
-                              )
+                                !currentPlan ? "Subscribe & Pay" :
+                                  isUpgrade ? (
+                                    <>
+                                      <ArrowUpRight className="w-3 h-3" /> Upgrade & Pay
+                                    </>
+                                  ) : (
+                                    <>
+                                      <ArrowDownRight className="w-3 h-3" /> Downgrade & Pay
+                                    </>
+                                  )
                             }
                           </Button>
                         )}

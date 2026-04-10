@@ -76,12 +76,36 @@ export default function SupportPage() {
     priority: "MEDIUM",
   });
 
-  const { data: tickets = [], isLoading: ticketsLoading, refetch } = useQuery({
-    queryKey: ["tickets"],
+  // Get current customer profile to find customerId
+  const { data: profile } = useQuery({
+    queryKey: ["customer-profile"],
     queryFn: async () => {
-      const { data } = await api.get("/api/tickets");
+      try {
+        const { data } = await api.get("/api/customers/me");
+        return data.data;
+      } catch (err) {
+        console.error("Failed to fetch profile:", err);
+        return null;
+      }
+    },
+  });
+
+  const customerId = profile?.id;
+
+  const { data: tickets = [], isLoading: ticketsLoading, refetch } = useQuery({
+    queryKey: ["tickets", isAdmin, isSupport, customerId],
+    queryFn: async () => {
+      // If admin/support, fetch all. If customer, fetch only theirs.
+      const endpoint = isAdmin || isSupport 
+        ? "/api/tickets" 
+        : (customerId ? `/api/tickets/customer/${customerId}` : null);
+      
+      if (!endpoint) return [];
+      
+      const { data } = await api.get(endpoint);
       return (data.data?.content || data.data || []) as Ticket[];
     },
+    enabled: !!(isAdmin || isSupport || customerId),
   });
 
   const { data: outages = [], isLoading: outagesLoading } = useQuery({
@@ -101,15 +125,25 @@ export default function SupportPage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      // Use profile's customerId if available, otherwise use form value (for admins)
+      const finalCustomerId = isAdmin || isSupport 
+        ? parseInt(newTicket.customerId) 
+        : customerId;
+
+      if (!finalCustomerId) {
+         alert("Customer ID is required");
+         return;
+      }
+
       await api.post("/api/tickets", {
         ...newTicket,
-        customerId: parseInt(newTicket.customerId),
+        customerId: finalCustomerId,
       });
       setDialogOpen(false);
       setNewTicket({ customerId: "", subject: "", description: "", category: "BILLING", priority: "MEDIUM" });
       refetch();
-    } catch {
-      // handle error
+    } catch (err) {
+      console.error("Failed to create ticket:", err);
     }
   };
 
@@ -127,13 +161,15 @@ export default function SupportPage() {
               <DialogTitle>New Support Ticket</DialogTitle>
             </DialogHeader>
             <form onSubmit={handleCreate} className="space-y-4">
-              <div className="space-y-2">
-                <Label>Customer ID</Label>
-                <Input value={newTicket.customerId}
-                  onChange={(e) => setNewTicket({ ...newTicket, customerId: e.target.value })}
-                  type="number" required className="bg-white/5 border-white/10"
-                />
-              </div>
+              {(isAdmin || isSupport) && (
+                <div className="space-y-2">
+                  <Label>Customer ID</Label>
+                  <Input value={newTicket.customerId}
+                    onChange={(e) => setNewTicket({ ...newTicket, customerId: e.target.value })}
+                    type="number" required className="bg-white/5 border-white/10"
+                  />
+                </div>
+              )}
               <div className="space-y-2">
                 <Label>Subject</Label>
                 <Input value={newTicket.subject}

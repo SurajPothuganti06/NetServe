@@ -23,6 +23,16 @@ public class TicketController {
 
     private final TicketService ticketService;
 
+    @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'SUPPORT')")
+    public ResponseEntity<ApiResponse<PagedResponse<TicketResponse>>> getAllTickets(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        Page<TicketResponse> result = ticketService.getAllTickets(PageRequest.of(page, size));
+        return ResponseEntity.ok(ApiResponse.success(
+                PagedResponse.of(result.getContent(), page, size, result.getTotalElements())));
+    }
+
     @PostMapping
     public ResponseEntity<ApiResponse<TicketResponse>> createTicket(
             @Valid @RequestBody CreateTicketRequest request) {
